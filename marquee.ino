@@ -66,12 +66,42 @@ const uint16_t colors[] =
     matrix.Color(255, 0, 0), matrix.Color(0, 255, 0), matrix.Color(0, 0, 255) 
 };
 
+unsigned int raw = 0;
+float volt = 0.0;
+#define BATT_CHECK_PIN 20
+
+//setup wifi server
+const char* ssid = "ATT3q854r2_Guest";
+const char* password = "ButterBeer9836";
+WiFiServer server(80);
+
 
 void setup() 
 {
     Serial.begin(115200);
+    Serial.setDebugOutput(true);
+
     Serial.println("setup()");
-    //pixels.begin(); // This initializes the NeoPixel library.
+    
+    //prepare to read battery voltage 
+    pinMode(A0, INPUT);
+
+    //connect server to AP
+    Serial.printf("Connecting to %s ", ssid);
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(500);
+        Serial.printf("WiFi.status = %d\n", WiFi.status());
+        //WiFi.printDiag(Serial);
+        //Serial.print(".");
+    }
+    Serial.println(" connected");
+
+    server.begin();
+    Serial.printf("Web server started, open %s in a web browser\n", WiFi.localIP().toString().c_str());
+
+    //prepare marquee
     matrix.begin();
     matrix.setTextWrap(false);
     matrix.setBrightness(30);
@@ -80,11 +110,66 @@ void setup()
     maxDisplacement = strlen(yourText) * pixelPerChar + matrix.width();
 }
 
+// prepare a web page to be send to a client (web browser)
+String prepareHtmlPage()
+{
+    digitalWrite(BATT_CHECK_PIN, HIGH); 
+    raw = analogRead(A0);
+    volt = raw / 1023.0;
+    volt = volt * 4.2;
+    digitalWrite(BATT_CHECK_PIN, LOW); 
+    Serial.printf("volt = %f\n", volt);
+
+    String htmlPage =
+        String("HTTP/1.1 200 OK\r\n") +
+            "Content-Type: text/html\r\n" +
+            "Connection: close\r\n" +  // the connection will be closed after completion of the response
+            //"Refresh: 5\r\n" +  // refresh the page automatically every 5 sec
+            "\r\n" +
+            "<!DOCTYPE HTML>" +
+            "<html>" +
+            "Voltage:  " + String(volt) +
+            "</br>" +
+            "</html>" +
+            "\r\n";
+  return htmlPage;
+}
+
 void loop()
 {
     //NOTE: Here's where the code for the main program should start. 
-    Serial.println("Main program loop begins...");
+   //Serial.println("Main program loop begins...");
     
+    //server 
+    WiFiClient client = server.available();
+    // wait for a client (web browser) to connect
+    if (client)
+    {
+        Serial.println("\n[Client connected]");
+        while (client.connected())
+        {
+            // read line by line what the client (web browser) is requesting
+            if (client.available())
+            {
+                String line = client.readStringUntil('\r');
+                Serial.print(line);
+                // wait for end of client's request, that is marked with an empty line
+                if (line.length() == 1 && line[0] == '\n')
+                {
+                    client.println(prepareHtmlPage());
+                    break;
+                }
+            }
+        }
+        delay(1); // give the web browser time to receive the data
+
+        // close the connection:
+        client.stop();
+        Serial.println("[Client disonnected]");
+    }
+
+
+    //display marquee
     matrix.fillScreen(0);
     matrix.setTextWrap( false );
     matrix.fillScreen(0);
@@ -100,6 +185,7 @@ void loop()
     delay(100);
   
     
-    Serial.println("Main program loop ends...");
+    //Serial.println("Main program loop ends...");
     
 }
+
