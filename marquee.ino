@@ -55,7 +55,8 @@ NEO_MATRIX_TOP     + NEO_MATRIX_RIGHT +
 NEO_MATRIX_COLUMNS + NEO_MATRIX_PROGRESSIVE,
 NEO_GRB            + NEO_KHZ800);
 
-char yourText[64] = "Hello World";
+const int MARQUEE_LEN = 64;
+char marqueeText[MARQUEE_LEN] = "Hello World";
 int  pixelPerChar = 6;
 int  maxDisplacement;
 int x = matrix.width();
@@ -71,10 +72,103 @@ float volt = 0.0;
 #define BATT_CHECK_PIN 20
 
 //setup wifi server
-const char* ssid = "ATT3q854r2_Guest";
+const char* ssid = "SDGOL";
 const char* password = "ButterBeer9836";
-WiFiServer server(80);
+int status = WL_IDLE_STATUS;
+ESP8266WebServer server(80);
 
+
+// prepare a web page to be send to a client (web browser)
+void onRoot() 
+{
+    Serial.println("onRoot()");
+    char temp[1000];
+	int sec = millis() / 1000;
+	int min = sec / 60;
+	int hr = min / 60;
+
+	snprintf ( temp, 1000,
+        "<html>\
+        <head>\
+           <title>%s</title>\
+            <style>\
+            body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\
+            </style>\
+        </head>\
+        <body>\
+            <p>Uptime: %02d:%02d:%02d</p>\
+            <p><img src=\"/test.svg\" /></p>\
+            <p><form action='/submit' method='POST'>\
+                Marquee text: <input type=\"text\" name=\"marquee\" value=\"%s\"><br>\
+                <input type=\"submit\" value=\"Submit\">\
+            </form></p>\
+        </body>\
+        </html>",
+		ssid, hr, min % 60, sec % 60, marqueeText
+	);
+    Serial.println(temp);
+	server.send ( 200, "text/html", temp);
+}
+
+void onSubmit()
+{
+    Serial.println("onSubmit()");
+    if (server.args() > 0 ) 
+    {
+        for ( uint8_t i = 0; i < server.args(); i++ ) 
+        {
+            Serial.printf("%s : %s\n", server.argName ( i ).c_str(), server.arg ( i ).c_str());
+            if (server.argName(i) == "marquee") 
+            {
+                // do something here with value from server.arg(i);
+                snprintf(marqueeText, MARQUEE_LEN, server.arg(i).c_str());
+            }
+        }
+    }
+    
+}
+
+void onNotFound() 
+{
+    Serial.println("onNotFound()");
+    String message = "File Not Found\n\n";
+    message += "URI: ";
+    message += server.uri();
+    message += "\nMethod: ";
+    message += ( server.method() == HTTP_GET ) ? "GET" : "POST";
+    message += "\nArguments: ";
+    message += server.args();
+    message += "\n";
+
+    for ( uint8_t i = 0; i < server.args(); i++ ) 
+    {
+        message += " " + server.argName ( i ) + ": " + server.arg ( i ) + "\n";
+    }
+
+    server.send (404, "text/plain", message );
+}
+
+
+void drawGraph() 
+{
+     Serial.println("drawGraph()");
+    String out = "";
+    char temp[100];
+    out += "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"400\" height=\"150\">\n";
+    out += "<rect width=\"400\" height=\"150\" fill=\"rgb(250, 230, 210)\" stroke-width=\"1\" stroke=\"rgb(0, 0, 0)\" />\n";
+    out += "<g stroke=\"black\">\n";
+    int y = rand() % 130;
+    for (int x = 10; x < 390; x+= 10) 
+    {
+        int y2 = rand() % 130;
+        sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke-width=\"1\" />\n", x, 140 - y, x + 10, 140 - y2);
+        out += temp;
+        y = y2;
+    }
+    out += "</g>\n</svg>\n";
+
+    server.send ( 200, "image/svg+xml", out);
+}
 
 void setup() 
 {
@@ -86,20 +180,21 @@ void setup()
     //prepare to read battery voltage 
     pinMode(A0, INPUT);
 
-    //connect server to AP
-    Serial.printf("Connecting to %s ", ssid);
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        delay(500);
-        Serial.printf("WiFi.status = %d\n", WiFi.status());
-        //WiFi.printDiag(Serial);
-        //Serial.print(".");
-    }
-    Serial.println(" connected");
+ 	Serial.print("Configuring access point...");
+	WiFi.softAP(ssid, password);
 
-    server.begin();
-    Serial.printf("Web server started, open %s in a web browser\n", WiFi.localIP().toString().c_str());
+	IPAddress myIP = WiFi.softAPIP();
+	Serial.print("AP IP address: ");
+	Serial.println(myIP);
+	server.on("/", onRoot);
+    server.on ( "/test.svg", drawGraph );
+	server.on ( "/inline", []() { server.send ( 200, "text/plain", "this works as well" ); } );
+    server.on ( "/submit", onSubmit);
+	server.onNotFound ( onNotFound );
+	server.begin();
+    Serial.printf("Web server started, open %s in a web browser\n", WiFi.softAPIP().toString().c_str());
+
+    snprintf(marqueeText, MARQUEE_LEN, WiFi.softAPIP().toString().c_str());
 
     //prepare marquee
     matrix.begin();
@@ -107,74 +202,19 @@ void setup()
     matrix.setBrightness(30);
     matrix.setTextColor(matrix.Color(80,255,0));
     matrix.setFont(&TomThumb);
-    maxDisplacement = strlen(yourText) * pixelPerChar + matrix.width();
+    //maxDisplacement = strlen(marqueeText) * pixelPerChar + matrix.width();
 }
 
-// prepare a web page to be send to a client (web browser)
-String prepareHtmlPage()
+void displayMarquee()
 {
-    digitalWrite(BATT_CHECK_PIN, HIGH); 
-    raw = analogRead(A0);
-    volt = raw / 1023.0;
-    volt = volt * 4.2;
-    digitalWrite(BATT_CHECK_PIN, LOW); 
-    Serial.printf("volt = %f\n", volt);
-
-    String htmlPage =
-        String("HTTP/1.1 200 OK\r\n") +
-            "Content-Type: text/html\r\n" +
-            "Connection: close\r\n" +  // the connection will be closed after completion of the response
-            //"Refresh: 5\r\n" +  // refresh the page automatically every 5 sec
-            "\r\n" +
-            "<!DOCTYPE HTML>" +
-            "<html>" +
-            "Voltage:  " + String(volt) +
-            "</br>" +
-            "</html>" +
-            "\r\n";
-  return htmlPage;
-}
-
-void loop()
-{
-    //NOTE: Here's where the code for the main program should start. 
-   //Serial.println("Main program loop begins...");
-    
-    //server 
-    WiFiClient client = server.available();
-    // wait for a client (web browser) to connect
-    if (client)
-    {
-        Serial.println("\n[Client connected]");
-        while (client.connected())
-        {
-            // read line by line what the client (web browser) is requesting
-            if (client.available())
-            {
-                String line = client.readStringUntil('\r');
-                Serial.print(line);
-                // wait for end of client's request, that is marked with an empty line
-                if (line.length() == 1 && line[0] == '\n')
-                {
-                    client.println(prepareHtmlPage());
-                    break;
-                }
-            }
-        }
-        delay(1); // give the web browser time to receive the data
-
-        // close the connection:
-        client.stop();
-        Serial.println("[Client disonnected]");
-    }
-
-
+    //Serial.println("displayMarquee()");
     //display marquee
+    maxDisplacement = strlen(marqueeText) * pixelPerChar + matrix.width();
     matrix.fillScreen(0);
     matrix.setTextWrap( false );
     matrix.fillScreen(0);
     matrix.setCursor(x, NEO_HEIGHT);
-    matrix.print(F("Hello World"));
+    matrix.print(marqueeText);
     if (--x < -maxDisplacement)
     {
         x = matrix.width();
@@ -182,8 +222,19 @@ void loop()
         matrix.setTextColor(colors[pass]);
     }
     matrix.show();
+}
+
+void loop()
+{
+    //NOTE: Here's where the code for the main program should start. 
+    //Serial.println("Main program loop begins...");
+    
+    //web server 
+    server.handleClient();
+
+    displayMarquee();
     delay(100);
-  
+
     
     //Serial.println("Main program loop ends...");
     
